@@ -40,6 +40,7 @@ class OMEStream(abc.ABC):
         dimensions: Sequence[Dimension],
         *,
         overwrite: bool = False,
+        position_keys: Sequence[str] | None = None,
     ) -> Self:
         """Create a new stream for path, dtype, and dimensions.
 
@@ -115,12 +116,14 @@ class MultiPositionOMEStream(OMEStream):
     def __init__(self) -> None:
         # property to track number of positions
         self._num_positions = 0
+        # property to track position keys
+        self._position_keys = None
         # property to track non-position dimensions in storage order (as stored on disk)
         self._storage_order_dims: Sequence[Dimension] = []
         # iterator to yield (position_key, index) tuples in acquisition order
         self._dim_iter: Iterator[tuple[int, tuple[int, ...]]] = iter(())
 
-    def _init_dimensions(self, dimensions: Sequence[Dimension]) -> None:
+    def _init_dimensions(self, dimensions: Sequence[Dimension], position_keys: Sequence[str] | None = None) -> None:
         """Initialize dimensions.
 
         This method performs two related tasks:
@@ -169,6 +172,13 @@ class MultiPositionOMEStream(OMEStream):
 
         # Create iterator yielding (position_key, index_tuple) in acquisition order
         self._dim_iter = iter(DimensionIndexIterator(dimensions, storage_order_labels))
+
+        if position_keys is not None:
+            if len(position_keys) != self._num_positions:
+                raise ValueError(f"Number of position keys ({len(position_keys)}) does not match number of positions ({self._num_positions})")
+            self._position_keys = position_keys
+        else:
+            self._position_keys = [str(i) for i in range(self._num_positions)]
 
     @property
     def num_positions(self) -> int:
@@ -219,5 +229,6 @@ class MultiPositionOMEStream(OMEStream):
         if not self.is_active():
             msg = "Stream is closed or uninitialized. Call create() first."
             raise RuntimeError(msg)
-        position_key, index = next(self._dim_iter)
-        self._write_to_backend(str(position_key), index, frame)
+        position_idx, index = next(self._dim_iter)
+        position_key = self._position_keys[position_idx]
+        self._write_to_backend(position_key, index, frame)

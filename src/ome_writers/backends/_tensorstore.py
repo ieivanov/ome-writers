@@ -48,19 +48,19 @@ class TensorStoreZarrStream(MultiPositionOMEStream):
         dimensions: Sequence[Dimension],
         *,
         overwrite: bool = False,
+        position_keys: Sequence[str] | None = None,
     ) -> Self:
         # Initialize dimensions from MultiPositionOMEStream
         # NOTE: Data will be stored in acquisition order.
-        self._init_dimensions(dimensions)
+        self._init_dimensions(dimensions, position_keys)
 
         self._delete_existing = overwrite
 
         # Create group and array paths
-        self._create_group(self._normalize_path(path), self.storage_order_dims)
+        self._create_group(self._normalize_path(path))
 
         # Create stores for each array
-        for pos_idx in range(self.num_positions):
-            array_key = str(pos_idx)
+        for array_key in self._array_paths.keys():
             spec = self._create_spec(dtype, self.storage_order_dims, array_key)
             try:
                 self._stores[array_key] = self._ts.open(spec).result()
@@ -80,6 +80,11 @@ class TensorStoreZarrStream(MultiPositionOMEStream):
     ) -> dict:
         labels, shape, units, chunk_shape = zip(*dimensions, strict=False)
         labels = tuple(str(x) for x in labels)
+        chunk_shape = [1] * len(shape)
+        chunk_shape[-3:] = [min(shape[-3], 12),] + list(shape[-2:])
+        chunk_shape = tuple(chunk_shape)
+        print(f"shape: {shape}")
+        print(f"chunk_shape: {chunk_shape}")
         return {
             "driver": "zarr3",
             "kvstore": {"driver": "file", "path": str(self._array_paths[array_key])},
@@ -88,6 +93,9 @@ class TensorStoreZarrStream(MultiPositionOMEStream):
                 "dtype": dtype.name,
                 "chunk_layout": {"chunk": {"shape": chunk_shape}},
                 "dimension_units": units,
+                "codec": {"driver": 'zarr3', "codecs": [{"name": "zstd", "configuration": {"level": 1}}]}
+                # "codec": {"driver": 'zarr3', "codecs": [{"name": "blosc", "configuration": {"cname": "zstd", "clevel": 1, "shuffle": "shuffle"}}]}
+                # "codec": {"driver": 'zarr3', "codecs": [{"name": "blosc", "configuration": {"cname": "zstd", "clevel": 1}}]}
             },
             "create": True,
             "delete_existing": self._delete_existing,
@@ -114,13 +122,12 @@ class TensorStoreZarrStream(MultiPositionOMEStream):
     def is_active(self) -> bool:
         return bool(self._stores)
 
-    def _create_group(self, path: str, dims: Sequence[Dimension]) -> Path:
+    def _create_group(self, path: str) -> Path:
         self._group_path = Path(path)
         self._group_path.mkdir(parents=True, exist_ok=True)
 
         # Create array paths for each position
-        for pos_idx in range(self.num_positions):
-            array_key = str(pos_idx)
+        for array_key in self._position_keys:
             self._array_paths[array_key] = self._group_path / array_key
 
         # Note: We'll create proper OME-NGFF metadata in _patch_metadata_to_ngff_v05
@@ -146,7 +153,7 @@ class TensorStoreZarrStream(MultiPositionOMEStream):
 
         # Use storage order dims as-is (acquisition order)
         attrs = ome_meta_v5(
-            {str(i): self.storage_order_dims for i in range(self.num_positions)}
+            {position_key: self.storage_order_dims for position_key in self._position_keys}
         )
         zarr_json = self._group_path / "zarr.json"
         current_meta: dict = {
