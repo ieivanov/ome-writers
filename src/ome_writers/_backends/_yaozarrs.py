@@ -71,6 +71,7 @@ class YaozarrsBackend(ArrayBackend, Generic[_AT]):
         self._arrays: list[_AT] = []
         self._image_group_paths: list[str] = []  # Parallel to _arrays, for metadata
         self._meta_mirrors: dict[str, JsonDocumentMirror] = {}  # grouppath -> mirror
+        self._root_mirror: JsonDocumentMirror | None = None
         self._finalized = False
         self._root: Path | None = None
         self._chunk_buffers: list[ChunkBuffer] | None = None
@@ -428,12 +429,46 @@ class YaozarrsBackend(ArrayBackend, Generic[_AT]):
             mirror["attributes"] = deepcopy(attrs)
             mirror.flush()
 
+    def get_root_metadata(self) -> dict | None:
+        """Get attributes from the root zarr.json.
+
+        Returns
+        -------
+        dict | None
+            Root group attributes dict, or None if not available.
+        """
+        if self._root_mirror is None:
+            return None
+        return deepcopy(self._root_mirror.get("attributes", {}))
+
+    def update_root_metadata(self, metadata: dict) -> None:
+        """Update attributes in the root zarr.json.
+
+        Parameters
+        ----------
+        metadata : dict
+            Attributes dict to write to the root group's zarr.json.
+        """
+        if self._root_mirror is None:  # pragma: no cover
+            warnings.warn(
+                "Root mirror is not available. Cannot update root metadata.",
+                stacklevel=2,
+            )
+            return
+
+        self._root_mirror["attributes"] = deepcopy(metadata)
+        self._root_mirror.flush()
+
     def finalize(self) -> None:
         """Flush and release resources."""
         if not self._finalized:
             self._finalize_chunk_buffers()
             for mirror in self._meta_mirrors.values():
                 mirror.flush()
+            # Flush root mirror (no-op if same object as a meta_mirror
+            # since it was already flushed above and won't be dirty)
+            if self._root_mirror is not None:
+                self._root_mirror.flush()
             self._arrays.clear()
             # Keep _image_group_paths for post-close reading
             self._finalized = True
@@ -464,11 +499,20 @@ class YaozarrsBackend(ArrayBackend, Generic[_AT]):
         """Cache metadata from parent groups.
 
         Reads zarr.json and caches their attributes in position order.
+        Also caches the root zarr.json for root-level metadata access.
         """
         for group_path in self._image_group_paths:
             if (zarr_json := root / group_path / "zarr.json").exists():
                 self._meta_mirrors[group_path] = doc = JsonDocumentMirror(zarr_json)
                 doc.load()
+
+        # Cache root zarr.json: for single-position ("." is the image group),
+        # reuse the existing mirror; otherwise create a separate one.
+        if "." in self._meta_mirrors:
+            self._root_mirror = self._meta_mirrors["."]
+        elif (root_zarr := root / "zarr.json").exists():
+            self._root_mirror = JsonDocumentMirror(root_zarr)
+            self._root_mirror.load()
 
     def _should_use_chunk_buffering(self, storage_dims: list[Dimension]) -> bool:
         """Check if chunk buffering would be beneficial.

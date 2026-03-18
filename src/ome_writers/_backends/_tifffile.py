@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import threading
 import warnings
@@ -280,6 +281,9 @@ class TiffBackend(ArrayBackend):
                 if key in PLANE_KEYS:
                     plane_kwargs[key] = value
                 else:
+                    # ome.Map expects string values; serialize non-strings
+                    if not isinstance(value, str):
+                        value = json.dumps(value)
                     extra_kwargs[key] = value
 
             # meta_with_idx = {**frame_metadata, "storage_index": index}

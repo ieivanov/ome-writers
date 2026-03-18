@@ -251,6 +251,26 @@ class ArrayBackend(ABC):
         """
         return None
 
+    def get_root_metadata(self) -> Any:
+        """Get the root-level metadata (attributes from the root zarr.json).
+
+        Returns
+        -------
+        metadata
+            Root group attributes dict, or None if not supported by this backend.
+        """
+        return None  # pragma: no cover
+
+    def update_root_metadata(self, metadata: Any) -> None:
+        """Update the root-level metadata (attributes in the root zarr.json).
+
+        Parameters
+        ----------
+        metadata
+            Dict of attributes to write to the root group's zarr.json.
+        """
+        return None
+
     @abstractmethod
     def advance(self, indices: Sequence[tuple[int, tuple[int, ...]]]) -> None:
         """Advance through multiple frame positions without writing data.

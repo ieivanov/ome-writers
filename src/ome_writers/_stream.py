@@ -209,6 +209,14 @@ class OMEStream:
         """Update metadata in the backend.  Meaning is format-dependent."""
         self._backend.update_metadata(metadata)
 
+    def get_root_metadata(self) -> Any:
+        """Get attributes from the root zarr.json."""
+        return self._backend.get_root_metadata()
+
+    def update_root_metadata(self, metadata: Any) -> None:
+        """Update attributes in the root zarr.json."""
+        self._backend.update_root_metadata(metadata)
+
     def __enter__(self) -> OMEStream:
         """Enter context manager."""
         return self
